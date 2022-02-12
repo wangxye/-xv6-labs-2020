@@ -85,6 +85,20 @@ allocpid() {
   return pid;
 }
 
+uint64 proc_num(void) {
+  struct proc *p;
+  uint64 count = 0;
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      count++;
+    }
+    release(&p->lock);
+  }
+  return count;
+
+}
+
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
@@ -295,6 +309,7 @@ fork(void)
 
   np->state = RUNNABLE;
 
+  np->trace_mask = p -> trace_mask;
   release(&np->lock);
 
   return pid;
