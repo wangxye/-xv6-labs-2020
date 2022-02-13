@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -47,6 +49,57 @@ kvminit()
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 }
 
+// add a mapping to processes's kernel
+// page table
+void
+uvmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  if(mappages(pagetable, va, sz, pa, perm) != 0)
+    panic("uvmmap");
+}
+
+pagetable_t
+proc_kvminit()
+{
+  pagetable_t proc_kernel_pagetable = (pagetable_t) kalloc();
+  if(proc_kernel_pagetable == 0) {
+    return 0;
+  }
+  memset(proc_kernel_pagetable, 0, PGSIZE);
+  
+  //int i;
+  //for(i = 1; i < 512; i++){
+    //proc_kernel_pagetable[i] = kernel_pagetable[i];
+ // }
+  // uart registers
+  uvmmap(proc_kernel_pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  uvmmap(proc_kernel_pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // CLINT
+  uvmmap(proc_kernel_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+  // PLIC
+  uvmmap(proc_kernel_pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // map kernel text executable and read-only.
+  uvmmap(proc_kernel_pagetable, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  uvmmap(proc_kernel_pagetable, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+ uvmmap(proc_kernel_pagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  
+  return proc_kernel_pagetable;
+}
+
+void proc_kvminithart(pagetable_t pagetable) {
+  w_satp(MAKE_SATP(pagetable));
+  sfence_vma();
+}
 // Switch h/w page table register to the kernel's page table,
 // and enable paging.
 void
@@ -87,6 +140,34 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   }
   return &pagetable[PX(0, va)];
 }
+
+void vmprint_helper(pagetable_t pagetable,int dep) {
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      for(int j = 0; j < dep; j++) {
+        if(j != 0){
+	  printf(" ");
+	}
+	printf("..");
+      }
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      printf("%d: pte %p pa %p\n",i,pte,child);
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        vmprint_helper((pagetable_t)child,dep + 1);
+      }
+    }
+  }
+}
+
+//Print a page table
+void vmprint(pagetable_t pagetable){
+  // there are 2^9 = 512 PTEs in a page table.
+  printf("page table %p\n",pagetable);
+  vmprint_helper(pagetable,1);
+}
+
 
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
@@ -132,13 +213,32 @@ kvmpa(uint64 va)
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(myproc()->kernel_pagetable, va, 0);
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
     panic("kvmpa");
   pa = PTE2PA(*pte);
   return pa+off;
+}
+
+int proc_mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm) {
+  uint64 a, last;
+  pte_t *pte;
+
+  a = PGROUNDDOWN(va);
+  last = PGROUNDDOWN(va + size - 1);
+  for(;;){
+    if((pte = walk(pagetable, a, 1)) == 0)
+      return -1;
+    *pte = PA2PTE(pa) | perm | PTE_V;
+    if(a == last)
+      break;
+    a += PGSIZE;
+    pa += PGSIZE;
+  }
+  return 0;
+
 }
 
 // Create PTEs for virtual addresses starting at va that refer to
@@ -180,6 +280,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+    //pagetable
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
@@ -269,6 +370,7 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
   return newsz;
 }
 
+
 // Recursively free page-table pages.
 // All leaf mappings must already have been removed.
 void
@@ -298,6 +400,44 @@ uvmfree(pagetable_t pagetable, uint64 sz)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
   freewalk(pagetable);
 }
+
+
+void uvmfree2(pagetable_t pagetable, uint64 va, uint64 npages)
+{
+  if(npages > 0) {
+    uvmunmap(pagetable, va, npages, 1);
+  }
+  freewalk(pagetable);
+}
+
+
+//user space pagetable mapping to user kernel pagetable
+void proc_kernel_uvmcopy(pagetable_t proc_pagetable, pagetable_t kernel_pagetable,uint64 old_sz,uint64 new_sz) {
+  pte_t *pte, *kpte;
+  uint64 va;
+
+  if (new_sz >= PLIC)
+    panic("proc_kernel_uvmcopy: user process space is overwritten to kernel process space");
+
+  for(va = old_sz; va < new_sz;va += PGSIZE) {
+    if((pte = walk(proc_pagetable, va, 0)) == 0)
+      panic("proc_kernel_uvmcopy: pte should exist");
+
+    if((kpte = walk(kernel_pagetable, va, 1)) == 0)
+      panic("proc_kernel_uvmcopy: kpte should exist");
+
+    *kpte = *pte;
+    *kpte &= ~(PTE_U | PTE_W | PTE_X);
+  }
+
+  for(va = new_sz; va < old_sz; va += PGSIZE){
+    if((kpte = walk(kernel_pagetable, va, 1)) == 0)
+      panic("proc_kernel_uvmcopy: kpte should exist");
+    *kpte &= ~PTE_V;
+  }
+
+}
+
 
 // Given a parent process's page table, copy
 // its memory into a child's page table.
@@ -379,6 +519,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
+  /**
   uint64 n, va0, pa0;
 
   while(len > 0){
@@ -396,6 +537,8 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
     srcva = va0 + PGSIZE;
   }
   return 0;
+  **/
+  return copyin_new(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -405,6 +548,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
+  /**
   uint64 n, va0, pa0;
   int got_null = 0;
 
@@ -439,4 +583,6 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+  **/
+  return copyinstr_new(pagetable, dst, srcva, max);
 }

@@ -112,9 +112,22 @@ exec(char *path, char **argv)
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
   p->sz = sz;
+
+  // new logic added
+  // change to kernel page table
+  proc_kernel_uvmcopy(p->pagetable,p->kernel_pagetable,0,p->sz);
+
+
+  // switch to the new kernel page table
+  proc_kvminithart(p->kernel_pagetable);
+
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
+  
+  if(p->pid == 1) {
+    vmprint(p->pagetable);
+  } 
 
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
