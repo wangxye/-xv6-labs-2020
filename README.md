@@ -6,7 +6,7 @@
 
 - [x]  Lab syscall: System calls
 - [x]  Lab pgtbl: Page tables
-- [ ]  Lab traps: Trap
+- [x]  Lab traps: Trap
 - [ ]  Lab lazy: Lazy allocation
 - [ ]  Lab cow: Copy-on-write fork
 - [ ]  Lab thread: Multithreading
