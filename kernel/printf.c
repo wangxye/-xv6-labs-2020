@@ -114,9 +114,23 @@ printf(char *fmt, ...)
     release(&pr.lock);
 }
 
+//a list of the function calls on the stack above the point at which the error occurred.
+void backtrace(void) {
+  printf("backtrace:\n");
+  // cur fp
+  uint64 fp = r_fp();
+  while(fp != PGROUNDUP(fp)) {
+    uint64 ra = *(uint64*)(fp - 8); 
+    printf("%p\n",ra);
+    fp = *(uint64*)(fp - 16);
+  }
+}
+
+
 void
 panic(char *s)
 {
+  backtrace();
   pr.locking = 0;
   printf("panic: ");
   printf(s);
