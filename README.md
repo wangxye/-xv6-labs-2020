@@ -3,11 +3,10 @@
 ## Progress
 
 - [x]  Lab util: Unix utilities
-
 - [x]  Lab syscall: System calls
 - [x]  Lab pgtbl: Page tables
 - [x]  Lab traps: Trap
-- [ ]  Lab lazy: Lazy allocation
+- [x]  Lab lazy: Lazy allocation
 - [ ]  Lab cow: Copy-on-write fork
 - [ ]  Lab thread: Multithreading
 - [ ]  Lab lock: Parallelism/locking
