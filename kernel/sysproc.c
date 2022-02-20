@@ -48,6 +48,9 @@ sys_sbrk(void)
     return -1;
   struct proc *p = myproc();
   addr = p->sz;
+  uint64 newaddr = addr + n;
+  if(newaddr >= MAXVA || newaddr <= 0)
+    return addr;
   //if(growproc(n) < 0)
     //return -1;
   if(n < 0) {
