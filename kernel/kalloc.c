@@ -14,6 +14,13 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+struct ref_stru {
+  struct spinlock lock;
+  // 引用计数
+  uint8 refcount[PHYSTOP / PGSIZE];
+} ref;
+
+
 struct run {
   struct run *next;
 };
@@ -27,7 +34,14 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&ref.lock, "ref");
   freerange(end, (void*)PHYSTOP);
+}
+
+void incref(uint64 va) {
+  acquire(&ref.lock);
+  ref.refcount[va / PGSIZE]++;
+  release(&ref.lock);
 }
 
 void
@@ -35,8 +49,10 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE) {
+    ref.refcount[(uint64)p / PGSIZE] = 1;
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by v,
@@ -52,6 +68,13 @@ kfree(void *pa)
     panic("kfree");
 
   // Fill with junk to catch dangling refs.
+  acquire(&ref.lock);
+  if(--ref.refcount[(uint64)pa / PGSIZE] > 0) {
+    release(&ref.lock);
+    return;
+  }
+  release(&ref.lock);
+
   memset(pa, 1, PGSIZE);
 
   r = (struct run*)pa;
@@ -72,11 +95,16 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r) {
     kmem.freelist = r->next;
+    acquire(&ref.lock);
+    ref.refcount[(uint64)r / PGSIZE] = 1;  // 将引用计数初始化为1
+    release(&ref.lock);
+  }
   release(&kmem.lock);
 
-  if(r)
+  if(r) {
     memset((char*)r, 5, PGSIZE); // fill with junk
+  }
   return (void*)r;
 }
