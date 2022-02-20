@@ -7,7 +7,7 @@
 - [x]  Lab pgtbl: Page tables
 - [x]  Lab traps: Trap
 - [x]  Lab lazy: Lazy allocation
-- [ ]  Lab cow: Copy-on-write fork
+- [x]  Lab cow: Copy-on-write fork
 - [ ]  Lab thread: Multithreading
 - [ ]  Lab lock: Parallelism/locking
 - [ ]  Lab fs: File system
