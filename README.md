@@ -8,7 +8,7 @@
 - [x]  Lab traps: Trap
 - [x]  Lab lazy: Lazy allocation
 - [x]  Lab cow: Copy-on-write fork
-- [ ]  Lab thread: Multithreading
+- [x]  Lab thread: Multithreading
 - [ ]  Lab lock: Parallelism/locking
 - [ ]  Lab fs: File system
 - [ ]  Lab mmap: Mmap
