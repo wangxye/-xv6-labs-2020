@@ -16,6 +16,7 @@
 #include "file.h"
 #include "fcntl.h"
 
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -482,5 +483,84 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+
+uint64 sys_mmap(void) {
+  struct proc* p = myproc();
+  struct file* f;
+  uint64 addrs;
+  int prot, flag, len, offset;
+  if(argaddr(0, &addrs) < 0 || argint(1, &len) < 0 || argint(2, &prot) < 0 ||
+    argint(3, &flag) < 0 || argfd(4, 0 , &f) < 0 || argint(5, &offset) < 0)
+    return -1;
+  if(addrs != 0 || offset != 0 || len < 0)
+    return -1;
+  if(flag == MAP_SHARED && (prot & PROT_WRITE) && !f->writable) 
+    return -1;
+  if(p->sz + len > MAXVA)
+    return -1;
+  for(int i = 0; i < VMASIZE; ++i) {
+    if(p->vmas[i].used == 0) {
+      uint64 addr = p->sz;
+      p->sz += len;
+      filedup(f);
+      p->vmas[i].file = f;
+      p->vmas[i].addr = addr;
+      p->vmas[i].length = len;
+      p->vmas[i].offset = offset;
+      p->vmas[i].permission = prot;
+      p->vmas[i].flag = flag;
+      p->vmas[i].used = 1;
+      return addr;
+    }
+  }
+
+  return -1;
+}
+
+
+uint64 sys_munmap(void) {
+  uint64 addr;
+  int length;
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0) {
+    return -1;
+  }
+  struct proc* p = myproc();
+  int i;
+  for(i = 0; i < VMASIZE; ++i) {
+    if(p->vmas[i].used && p->vmas[i].length >= length) {
+      // 根据提示，munmap的地址范围只能是
+      // 1. 起始位置
+      if(p->vmas[i].addr == addr) {
+        p->vmas[i].addr += length;
+        p->vmas[i].length -= length;
+        break;
+      }
+      // 2. 结束位置
+      if(addr + length == p->vmas[i].addr + p->vmas[i].length) {
+        p->vmas[i].length -= length;
+        break;
+      }
+    }
+  }
+
+
+  if(i == VMASIZE) {
+    return -1;
+  }
+  struct file* f = p->vmas[i].file;
+  //uint64 offset = pvma->offset + addr - pvma->addr;
+  if(p->vmas[i].flag == MAP_SHARED && (p->vmas[i].permission & PROT_WRITE) != 0)
+    filewrite(f, addr, length);
+  uvmunmap(p->pagetable, addr, PGROUNDUP(length) / PGSIZE, 1);
+
+  // 当前VMA中全部映射都被取消
+  if(p->vmas[i].length == 0) {
+    fileclose(f);
+    p->vmas[i].used = 0;
+  }
+
   return 0;
 }

@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -20,7 +21,6 @@ static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
-
 
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
@@ -133,7 +133,7 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  memset(&p->vmas, 0, sizeof(p->vmas));
   return p;
 }
 
@@ -295,6 +295,13 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+  
+  for(i = 0; i < VMASIZE; ++i) {
+    if(p->vmas[i].used) {
+      memmove(&np->vmas[i], &p->vmas[i], sizeof(p->vmas[i]));
+      filedup(p->vmas[i].file);
+    }
+  }
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -352,7 +359,16 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
-
+  
+  for(int i = 0; i < VMASIZE; ++i) {
+    if(p->vmas[i].used) {
+      if(p->vmas[i].flag == MAP_SHARED && (p->vmas[i].permission & PROT_WRITE) != 0)
+        filewrite(p->vmas[i].file, p->vmas[i].addr, p->vmas[i].length);
+      uvmunmap(p->pagetable, p->vmas[i].addr, PGROUNDUP(p->vmas[i].length) / PGSIZE, 1);
+      fileclose(p->vmas[i].file);
+      p->vmas[i].used = 0;
+    }
+  }
   begin_op();
   iput(p->cwd);
   end_op();
