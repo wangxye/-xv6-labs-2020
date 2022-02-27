@@ -11,5 +11,5 @@
 - [x]  Lab thread: Multithreading
 - [x]  Lab lock: Parallelism/locking
 - [x]  Lab fs: File system
-- [ ]  Lab mmap: Mmap
+- [x]  Lab mmap: Mmap
 - [ ]  Lab net: Network stack
